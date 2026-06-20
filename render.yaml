@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: contextcast
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    disk:
+      name: contextcast-media
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: MEDIA_DATA_DIR
+        value: /var/data/contextcast
+      - key: WORKER_CONCURRENCY
+        value: 1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: contextcast-queue
+          property: connectionString
+
+  - type: keyvalue
+    name: contextcast-queue
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: noeviction

@@ -32,6 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# local media and processing state
+/.data/
+
+# user-uploaded media (runtime, not source)
+/public/uploads/
 
 # vercel
 .vercel

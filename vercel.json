@@ -1,0 +1,9 @@
+{
+  "experimentalServices": {
+    "contextcast": {
+      "type": "web",
+      "routePrefix": "/",
+      "framework": "nextjs"
+    }
+  }
+}
