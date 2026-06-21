@@ -41,8 +41,20 @@ export default function UploadForm() {
       const form = new FormData();
       form.append("media", file);
       const response = await fetch("/api/upload", { method: "POST", body: form });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Upload failed");
+      const raw = await response.text();
+      let data: { jobId?: string; error?: string } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        // Non-JSON body (e.g. a platform "Request Entity Too Large" page).
+        throw new Error(
+          response.status === 413
+            ? "This file is too large for this server. Try a smaller file, or use the full deployment."
+            : `Upload failed (${response.status}). The server could not process this file.`,
+        );
+      }
+      if (!response.ok) throw new Error(data.error || `Upload failed (${response.status})`);
+      if (!data.jobId) throw new Error("Upload failed: the server did not start a job.");
       router.push(`/processing/${data.jobId}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Upload failed");
