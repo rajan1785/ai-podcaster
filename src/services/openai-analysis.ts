@@ -135,7 +135,9 @@ export async function analyzeTranscript(
                   end: { type: "number" },
                   title: { type: "string" },
                   hook: { type: "string" },
-                  score: { type: "number", minimum: 0, maximum: 100 },
+                  // No min/max: OpenAI strict structured outputs rejects numeric
+                  // range keywords. The score is clamped to 0-100 in code below.
+                  score: { type: "number" },
                 },
               },
             },
@@ -145,7 +147,14 @@ export async function analyzeTranscript(
     },
   });
 
-  return JSON.parse(response.output_text) as StructuredAnalysis;
+  const analysis = JSON.parse(response.output_text) as StructuredAnalysis;
+  return {
+    ...analysis,
+    viralClips: analysis.viralClips.map((clip) => ({
+      ...clip,
+      score: Math.max(0, Math.min(100, Math.round(clip.score))),
+    })),
+  };
 }
 
 export async function answerQuestion(
