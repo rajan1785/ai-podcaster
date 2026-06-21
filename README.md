@@ -2,6 +2,24 @@
 
 ContextCast turns a video or audio file of up to 30 minutes into a timestamped media workspace: aligned transcript, grounded summary and chapters, ranked vertical clips, and chat that jumps back to its source moment.
 
+**▶ Live demo:** https://ai-podcaster-eight.vercel.app/demo — a hosted, pre-processed sample workspace. No setup or API key required; runs in demo-analysis mode.
+
+To exercise the full pipeline (real uploads, Whisper/GPT-4o, FFmpeg clipping), run it locally — see [Run locally](#run-locally). The hosted demo intentionally omits uploads because they need FFmpeg, a worker process, and persistent storage.
+
+## Run locally
+
+Prerequisites: Node.js 22+ and FFmpeg/FFprobe (`ffmpeg -version` to confirm). Redis is optional — without it, a safe in-process queue runs the worker inline.
+
+```bash
+git clone https://github.com/rajan1785/ai-podcaster.git
+cd ai-podcaster
+cp .env.example .env.local      # then add your OPENAI_API_KEY
+npm install
+npm run dev                     # http://localhost:3000
+```
+
+Open `http://localhost:3000`, upload a video, and the full pipeline runs end to end. With `OPENAI_API_KEY` set you get live Whisper/GPT-4o analysis; without it, files are still probed, converted, clipped, played, and indexed, with clearly labeled demo analysis.
+
 ## What is implemented
 
 - Server-validated MP4, MOV, WebM, MP3, M4A, WAV, and OGG uploads up to 500 MB.
@@ -15,17 +33,7 @@ ContextCast turns a video or audio file of up to 30 minutes into a timestamped m
 - Atomic, disk-backed job records and byte-range media streaming.
 - A fully functional demo-analysis fallback when `OPENAI_API_KEY` is absent.
 
-## Local development
-
-Prerequisites: Node.js 22+, FFmpeg/FFprobe, and optionally Redis.
-
-```bash
-cp .env.example .env.local
-npm install
-npm run dev
-```
-
-Add `OPENAI_API_KEY` for live analysis. Without it, uploaded files are still probed, converted, clipped, played, indexed, and displayed with clearly labeled demo analysis. If `REDIS_URL` is absent, development uses a safe in-process queue fallback; production should use Redis.
+## Production-style local run
 
 Run the production worker and web server together:
 
@@ -57,7 +65,9 @@ flowchart LR
 
 Job metadata is written atomically to `MEDIA_DATA_DIR`. Original media and rendered clips are served through authenticated-ready route handlers with HTTP byte-range support rather than directly from `public/`.
 
-## Render deployment
+## Optional: production deployment (Render)
+
+> Not required to run or demo ContextCast — the live demo above and the local run cover both. This section is for standing up an always-on hosted instance with the full upload pipeline, which needs a paid Render service (a persistent disk is unavailable on Render's free web tier).
 
 The included `render.yaml` provisions:
 
