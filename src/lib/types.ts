@@ -46,7 +46,7 @@ export interface AnalysisResult {
   chapters: Chapter[];
   transcript: TranscriptSegment[];
   viralClips: ViralClip[];
-  analysisMode: "openai" | "demo";
+  analysisMode: "openai" | "groq" | "demo";
   duration: number;
 }
 

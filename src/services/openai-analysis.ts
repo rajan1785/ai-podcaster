@@ -1,5 +1,4 @@
 import { createReadStream } from "node:fs";
-import { readFile } from "node:fs/promises";
 import OpenAI from "openai";
 import { createEmbeddings } from "@/lib/search";
 import type {
@@ -23,8 +22,32 @@ interface StructuredAnalysis {
   viralClips: Array<Omit<ViralClip, "id" | "assetPath">>;
 }
 
-function client() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+export type LiveProvider = "groq" | "openai";
+
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+
+// Prefer Groq when its (free) key is present, otherwise fall back to OpenAI.
+export function liveProvider(): LiveProvider | undefined {
+  if (process.env.GROQ_API_KEY) return "groq";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  return undefined;
+}
+
+function providerConfig(provider: LiveProvider) {
+  if (provider === "groq") {
+    return {
+      client: new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: GROQ_BASE_URL }),
+      transcriptionModel: process.env.GROQ_TRANSCRIPTION_MODEL || "whisper-large-v3",
+      analysisModel: process.env.GROQ_ANALYSIS_MODEL || "llama-3.3-70b-versatile",
+      chatModel: process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant",
+    };
+  }
+  return {
+    client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+    transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1",
+    analysisModel: process.env.OPENAI_ANALYSIS_MODEL || "gpt-4o",
+    chatModel: process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini",
+  };
 }
 
 function wordsForSegment(words: TranscriptWord[], start: number, end: number) {
@@ -32,11 +55,13 @@ function wordsForSegment(words: TranscriptWord[], start: number, end: number) {
 }
 
 export async function transcribeMedia(audioPath: string): Promise<TranscriptSegment[]> {
-  if (!process.env.OPENAI_API_KEY) return [];
+  const provider = liveProvider();
+  if (!provider) return [];
+  const { client, transcriptionModel } = providerConfig(provider);
 
-  const response = (await client().audio.transcriptions.create({
+  const response = (await client.audio.transcriptions.create({
     file: createReadStream(audioPath),
-    model: "whisper-1",
+    model: transcriptionModel,
     response_format: "verbose_json",
     timestamp_granularities: ["word", "segment"],
   })) as unknown as WhisperResponse;
@@ -65,94 +90,52 @@ export async function transcribeMedia(audioPath: string): Promise<TranscriptSegm
   return segments.map((segment, index) => ({ ...segment, embedding: embeddings[index] }));
 }
 
-async function imageContent(framePaths: string[]) {
-  return Promise.all(
-    framePaths.map(async (framePath) => ({
-      type: "input_image" as const,
-      detail: "low" as const,
-      image_url: `data:image/jpeg;base64,${(await readFile(framePath)).toString("base64")}`,
-    })),
-  );
-}
-
+// Analyzes the transcript as text so it works with non-vision models
+// (e.g. Llama on Groq); video frames are not required.
 export async function analyzeTranscript(
   transcript: TranscriptSegment[],
   duration: number,
-  framePaths: string[],
 ): Promise<StructuredAnalysis> {
+  const provider = liveProvider();
+  if (!provider) throw new Error("No analysis provider is configured");
+  const { client, analysisModel } = providerConfig(provider);
+
   const transcriptText = transcript
     .map((segment) => `[${segment.start.toFixed(1)}-${segment.end.toFixed(1)}] ${segment.text}`)
     .join("\n")
     .slice(0, 90_000);
 
-  const frames = await imageContent(framePaths);
-  const response = await client().responses.create({
-    model: process.env.OPENAI_ANALYSIS_MODEL || "gpt-4o",
-    input: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: `Analyze this timestamped transcript and the sampled video frames. Return a factual summary, 3-8 useful chapters, and up to 3 compelling standalone vertical clip candidates. Clip candidates must be 15-60 seconds, remain within the media duration (${duration.toFixed(1)} seconds), start on a complete thought, and avoid misleading hooks.\n\nTRANSCRIPT\n${transcriptText}`,
-          },
-          ...frames,
-        ],
-      },
+  const system = [
+    `You analyze a timestamped transcript of a ${duration.toFixed(1)}-second media file.`,
+    "Respond with ONLY a JSON object of this exact shape:",
+    "{",
+    '  "summary": string,            // 2-4 sentence factual summary of what is actually said',
+    '  "chapters": [{ "start": number, "title": string, "summary": string }],',
+    '  "viralClips": [{ "start": number, "end": number, "title": string, "hook": string, "score": number }]',
+    "}",
+    `Rules: chapter "start" and clip "start"/"end" are seconds within 0-${duration.toFixed(1)}. ` +
+      "Provide 3-8 chapters. Provide up to 3 clip candidates, each 15-60 seconds, starting on a complete " +
+      "thought, with a 0-100 score. Base everything strictly on the transcript; do not invent content.",
+  ].join("\n");
+
+  const response = await client.chat.completions.create({
+    model: analysisModel,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: `TRANSCRIPT\n${transcriptText}` },
     ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "media_analysis",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["summary", "chapters", "viralClips"],
-          properties: {
-            summary: { type: "string" },
-            chapters: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["start", "title", "summary"],
-                properties: {
-                  start: { type: "number" },
-                  title: { type: "string" },
-                  summary: { type: "string" },
-                },
-              },
-            },
-            viralClips: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["start", "end", "title", "hook", "score"],
-                properties: {
-                  start: { type: "number" },
-                  end: { type: "number" },
-                  title: { type: "string" },
-                  hook: { type: "string" },
-                  // No min/max: OpenAI strict structured outputs rejects numeric
-                  // range keywords. The score is clamped to 0-100 in code below.
-                  score: { type: "number" },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
   });
 
-  const analysis = JSON.parse(response.output_text) as StructuredAnalysis;
+  const content = response.choices[0]?.message?.content || "{}";
+  const analysis = JSON.parse(content) as Partial<StructuredAnalysis>;
+
   return {
-    ...analysis,
-    viralClips: analysis.viralClips.map((clip) => ({
+    summary: typeof analysis.summary === "string" ? analysis.summary : "",
+    chapters: Array.isArray(analysis.chapters) ? analysis.chapters : [],
+    viralClips: (Array.isArray(analysis.viralClips) ? analysis.viralClips : []).map((clip) => ({
       ...clip,
-      score: Math.max(0, Math.min(100, Math.round(clip.score))),
+      score: Math.max(0, Math.min(100, Math.round(Number(clip.score) || 0))),
     })),
   };
 }
@@ -161,22 +144,29 @@ export async function answerQuestion(
   query: string,
   hits: TranscriptSegment[],
 ): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
+  const provider = liveProvider();
+  if (!provider) {
     return hits[0]
       ? `The closest section says: “${hits[0].text}”`
       : "I could not find a matching section.";
   }
+  const { client, chatModel } = providerConfig(provider);
 
   const context = hits
     .map((hit) => `[${hit.start.toFixed(1)}-${hit.end.toFixed(1)}] ${hit.text}`)
     .join("\n");
-  const response = await client().responses.create({
-    model: process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini",
-    instructions:
-      "Answer only from the supplied timestamped context. Be concise. If the answer is not present, say so. Mention the most relevant timestamp naturally.",
-    input: `Question: ${query}\n\nContext:\n${context}`,
+  const response = await client.chat.completions.create({
+    model: chatModel,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Answer only from the supplied timestamped context. Be concise. If the answer is not present, say so. Mention the most relevant timestamp naturally.",
+      },
+      { role: "user", content: `Question: ${query}\n\nContext:\n${context}` },
+    ],
   });
-  return response.output_text;
+  return response.choices[0]?.message?.content || "";
 }
 
 export async function demoResult(duration: number): Promise<AnalysisResult> {

@@ -3,11 +3,11 @@ import type { AnalysisResult, ProcessingStage } from "@/lib/types";
 import {
   analyzeTranscript,
   demoResult,
+  liveProvider,
   transcribeMedia,
 } from "@/services/openai-analysis";
 import {
   extractAudio,
-  extractFrames,
   probeMedia,
   renderVerticalClips,
 } from "@/services/media";
@@ -49,7 +49,8 @@ export async function processMediaJob(jobId: string) {
     const audioPath = await extractAudio(jobId, job.filePath);
 
     let result: AnalysisResult;
-    if (!process.env.OPENAI_API_KEY) {
+    const provider = liveProvider();
+    if (!provider) {
       await progress(jobId, "transcribing", 45);
       result = await demoResult(probe.duration);
     } else {
@@ -58,14 +59,13 @@ export async function processMediaJob(jobId: string) {
       if (!transcript.length) throw new Error("No speech was detected in this media");
 
       await progress(jobId, "indexing", 64);
-      const frames = await extractFrames(jobId, job.filePath, probe.duration, probe.hasVideo);
       await progress(jobId, "analyzing", 78);
-      const analysis = await analyzeTranscript(transcript, probe.duration, frames);
+      const analysis = await analyzeTranscript(transcript, probe.duration);
       result = {
         ...analysis,
         transcript,
         duration: probe.duration,
-        analysisMode: "openai",
+        analysisMode: provider,
         viralClips: analysis.viralClips.map((clip, index) => ({
           ...clip,
           id: `clip-${index + 1}`,
