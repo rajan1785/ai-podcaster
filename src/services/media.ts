@@ -7,6 +7,7 @@ import type { ViralClip } from "@/lib/types";
 interface MediaProbe {
   duration: number;
   hasVideo: boolean;
+  hasAudio: boolean;
 }
 
 function run(command: string, args: string[]) {
@@ -43,6 +44,7 @@ export async function probeMedia(filePath: string): Promise<MediaProbe> {
   return {
     duration,
     hasVideo: Boolean(data.streams?.some((stream) => stream.codec_type === "video")),
+    hasAudio: Boolean(data.streams?.some((stream) => stream.codec_type === "audio")),
   };
 }
 

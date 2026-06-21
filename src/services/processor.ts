@@ -40,6 +40,10 @@ export async function processMediaJob(jobId: string) {
     await progress(jobId, "probing", 8);
     const probe = await probeMedia(job.filePath);
     if (probe.duration > 30 * 60 + 1) throw new Error("Media exceeds the 30-minute limit");
+    if (!probe.hasAudio)
+      throw new Error(
+        "No audio track found in this file. Upload a video or audio file with spoken content to transcribe.",
+      );
 
     await progress(jobId, "extracting-audio", 20);
     const audioPath = await extractAudio(jobId, job.filePath);
